@@ -4,6 +4,7 @@ import dotenv from "dotenv";
 import { transactionTotal, transactionErrorsTotal } from "../../utils/metrics";
 import { AssetService, getConfiguredPaymentAsset } from "./assetService";
 import { sanctionService } from "../sanctionService";
+import { resolveToBaseAddress } from "../../stellar/muxed";
 
 dotenv.config();
 
@@ -126,15 +127,47 @@ export class StellarService {
     submittedAt?: Date;
   }> {
     try {
+      // Resolve destination address (handle both G and M addresses)
+      let resolvedDestinationAddress: string;
+      try {
+        resolvedDestinationAddress = resolveToBaseAddress(destinationAddress);
+      } catch (error) {
+        throw new Error(
+          `Invalid destination address: ${error instanceof Error ? error.message : "unknown error"}`,
+        );
+      }
+
       // Pre-flight sanction screening — blocks both sender and receiver
       if (senderName && receiverName) {
         await sanctionService.checkParties(senderName, receiverName);
       }
 
+      // If address-based screening is preferred, use checkPartiesByAddress
+      // This resolves muxed accounts and screens by the base address
+      if (this.issuerKeypair) {
+        const senderAddress = this.issuerKeypair.publicKey();
+        try {
+          await sanctionService.checkPartiesByAddress(
+            senderAddress,
+            resolvedDestinationAddress,
+            senderName,
+            receiverName,
+          );
+        } catch (error) {
+          // If it's a SanctionScreeningError, re-throw it
+          if (error instanceof Error && error.name === "SanctionScreeningError") {
+            throw error;
+          }
+          // Log other errors but don't fail if address validation fails
+          // (this maintains backward compatibility)
+          console.warn("Address-based sanction screening warning:", error);
+        }
+      }
+
       // MOCK MODE (no crash)
       if (this.isMockMode || !this.issuerKeypair) {
         console.log("Mock Stellar payment:", {
-          to: destinationAddress,
+          to: resolvedDestinationAddress,
           amount,
         });
 
@@ -151,7 +184,7 @@ export class StellarService {
       const paymentAsset = getConfiguredPaymentAsset();
       if (!paymentAsset.isNative()) {
         const trusted = await this.assetService.hasTrustline(
-          destinationAddress,
+          resolvedDestinationAddress,
           paymentAsset,
         );
         if (!trusted) {
@@ -171,7 +204,7 @@ export class StellarService {
       })
         .addOperation(
           StellarSdk.Operation.payment({
-            destination: destinationAddress,
+            destination: resolvedDestinationAddress,
             asset: paymentAsset,
             amount: amount,
           }),
