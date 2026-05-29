@@ -1,6 +1,7 @@
 import axios from "axios";
 import crypto from "crypto";
 import { VodacomProvider } from "../../src/services/mobilemoney/providers/vodacom";
+import { MobileMoneyService } from "../../src/services/mobilemoney/mobileMoneyService";
 
 // Mock axios
 jest.mock("axios");
@@ -188,6 +189,37 @@ describe("VodacomProvider", () => {
 
       const statusResult = await provider.getTransactionStatus("TXN12345");
       expect(statusResult).toEqual({ status: "completed" });
+    });
+  });
+
+  describe("MobileMoneyService Integration (Lazy Loading Factory)", () => {
+    it("should lazy load VodacomProvider through loadProvider factory", async () => {
+      const mockClient = {
+        get: jest.fn().mockResolvedValue({
+          data: {
+            output_ResponseCode: "INS-0",
+            output_SessionID: "mock-session-id"
+          }
+        }),
+        post: jest.fn().mockResolvedValue({
+          data: {
+            output_ResponseCode: "INS-0",
+            output_ResponseDesc: "Success",
+            output_TransactionID: "TXN-LAZY"
+          }
+        })
+      };
+      
+      // Use active axios instance from the reloaded module registry after resetModules()
+      const activeAxios = require("axios") as jest.Mocked<typeof axios>;
+      activeAxios.create.mockReturnValue(mockClient as any);
+
+      const service = new MobileMoneyService();
+
+      const result = await service.initiatePayment("vodacom", "255700000000", "1000");
+
+      expect(result.success).toBe(true);
+      expect(result.data.output_TransactionID).toBe("TXN-LAZY");
     });
   });
 });
