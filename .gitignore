@@ -44,3 +44,7 @@ benchmarks/results/*.json
 *.temp
 .cache/
 
+
+# Local Terraform artifacts
+.terraform-bin/
+terraform/.terraform/
