@@ -1,11 +1,12 @@
-import { ExpressAdapter } from "@bull-board/express";
 import { createBullBoard } from "@bull-board/api";
 import { BullMQAdapter } from "@bull-board/api/dist/queueAdapters/bullMQ";
 import { transactionQueue } from "./transactionQueue";
 import { syncQueue } from "./syncQueue";
 
 export function createQueueDashboard() {
+  const router = Router();
   const serverAdapter = new ExpressAdapter();
+  serverAdapter.setBasePath("/admin/queues");
 
   createBullBoard({
     queues: [
@@ -20,7 +21,7 @@ export function createQueueDashboard() {
     },
   });
 
-  serverAdapter.setBasePath("/admin/queues");
+  router.use("/", serverAdapter.getRouter());
 
-  return serverAdapter.getRouter();
+  return router;
 }

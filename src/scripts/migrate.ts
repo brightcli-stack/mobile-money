@@ -29,8 +29,11 @@ dotenv.config();
 // Database connection
 // ---------------------------------------------------------------------------
 
+const isSandbox = process.env.IS_SANDBOX === "true";
+const dbUrl = isSandbox ? (process.env.SANDBOX_DATABASE_URL || process.env.DATABASE_URL) : process.env.DATABASE_URL;
+
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
+  connectionString: dbUrl,
   max: 5,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 5000,
@@ -57,6 +60,7 @@ const MIGRATIONS_DIR = path.resolve(__dirname, "..", "..", "migrations");
 
 interface MigrationFile {
   version: string;
+  legacyVersion: string;
   name: string;
   upPath: string;
   downPath: string | null;
@@ -68,21 +72,86 @@ function discoverMigrations(): MigrationFile[] {
     .filter((f) => /^\d+_.+\.sql$/.test(f) && !f.endsWith(".down.sql"))
     .sort();
 
-  return files.map((filename) => {
+  const migrations = files.map((filename) => {
     const match = filename.match(/^(\d+)_(.+)\.sql$/);
     if (!match) throw new Error(`Unexpected migration filename: ${filename}`);
 
-    const [, version, label] = match;
-    const downFilename = `${version}_${label}.down.sql`;
+    const [, legacyVersion, label] = match;
+    const downFilename = `${legacyVersion}_${label}.down.sql`;
     const downPath = path.join(MIGRATIONS_DIR, downFilename);
 
     return {
-      version,
+      version: filename.replace(/\.sql$/, ""),
+      legacyVersion,
       name: filename,
       upPath: path.join(MIGRATIONS_DIR, filename),
       downPath: fs.existsSync(downPath) ? downPath : null,
     };
   });
+
+  const versions = new Map<string, string[]>();
+  for (const migration of migrations) {
+    const existing = versions.get(migration.version) ?? [];
+    existing.push(migration.name);
+    versions.set(migration.version, existing);
+  }
+
+  const duplicates = [...versions.entries()].filter(
+    ([, names]) => names.length > 1,
+  );
+
+  if (duplicates.length > 0) {
+    const lines = duplicates
+      .map(([version, names]) => `version ${version}: ${names.join(", ")}`)
+      .join("; ");
+    throw new Error(
+      `Duplicate migration version prefix detected. Each migration number must be unique. Conflicts: ${lines}`,
+    );
+  }
+
+  return migrations;
+}
+
+async function normalizeLegacyAppliedVersions(
+  migrations: MigrationFile[],
+): Promise<void> {
+  const result = await pool.query<{ version: string }>(
+    "SELECT version FROM schema_migrations WHERE version ~ '^[0-9]+$' ORDER BY version",
+  );
+
+  if (result.rows.length === 0) return;
+
+  const migrationByLegacyVersion = new Map<string, MigrationFile[]>();
+  for (const migration of migrations) {
+    const group = migrationByLegacyVersion.get(migration.legacyVersion) ?? [];
+    group.push(migration);
+    migrationByLegacyVersion.set(migration.legacyVersion, group);
+  }
+
+  const currentlyApplied = await getAppliedVersions();
+
+  for (const row of result.rows) {
+    const candidates = migrationByLegacyVersion.get(row.version);
+    if (!candidates || candidates.length === 0) {
+      console.warn(
+        `No migration file found for legacy applied version ${row.version}; leaving as-is.`,
+      );
+      continue;
+    }
+
+    const targetVersion = candidates[0].version;
+    if (currentlyApplied.has(targetVersion)) {
+      await pool.query("DELETE FROM schema_migrations WHERE version = $1", [
+        row.version,
+      ]);
+      continue;
+    }
+
+    await pool.query(
+      "UPDATE schema_migrations SET version = $1 WHERE version = $2",
+      [targetVersion, row.version],
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -99,8 +168,9 @@ async function getAppliedVersions(): Promise<Set<string>> {
 async function migrateUp(): Promise<void> {
   await ensureMigrationsTable();
 
-  const applied = await getAppliedVersions();
   const all = discoverMigrations();
+  await normalizeLegacyAppliedVersions(all);
+  const applied = await getAppliedVersions();
   const pending = all.filter((m) => !applied.has(m.version));
 
   if (pending.length === 0) {
@@ -136,16 +206,18 @@ async function migrateUp(): Promise<void> {
 
 async function migrateDown(): Promise<void> {
   await ensureMigrationsTable();
+  const all = discoverMigrations();
+  await normalizeLegacyAppliedVersions(all);
 
-  const applied = await getAppliedVersions();
-  if (applied.size === 0) {
+  const result = await pool.query<{ version: string }>(
+    "SELECT version FROM schema_migrations ORDER BY applied_at DESC LIMIT 1",
+  );
+  if (result.rows.length === 0) {
     console.log("No migrations to roll back.");
     return;
   }
 
-  const all = discoverMigrations();
-  const sortedApplied = [...applied].sort().reverse();
-  const lastVersion = sortedApplied[0];
+  const lastVersion = result.rows[0].version;
   const migration = all.find((m) => m.version === lastVersion);
 
   if (!migration) {
@@ -184,8 +256,9 @@ async function migrateDown(): Promise<void> {
 async function migrateStatus(): Promise<void> {
   await ensureMigrationsTable();
 
-  const applied = await getAppliedVersions();
   const all = discoverMigrations();
+  await normalizeLegacyAppliedVersions(all);
+  const applied = await getAppliedVersions();
 
   console.log("\nMigration Status:");
   console.log("=================");

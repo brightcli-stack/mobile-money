@@ -1,7 +1,9 @@
 import { Router, Request, Response, NextFunction } from "express";
+import { authenticateToken } from "../middleware/auth";
 import multer, { MulterError } from "multer";
 import csvParser from "csv-parser";
 import { Readable } from "stream";
+
 import { TransactionModel, TransactionStatus } from "../models/transaction";
 import { MobileMoneyService } from "../services/mobilemoney/mobileMoneyService";
 import { StellarService } from "../services/stellar/stellarService";
@@ -13,6 +15,7 @@ interface CsvRow {
   phoneNumber: string;
   provider: string;
   stellarAddress: string;
+  [key: string]: string;
 }
 
 interface ValidationError {
@@ -135,6 +138,10 @@ async function processJob(jobId: string, rows: CsvRow[]): Promise<void> {
       let failedAlreadyHandled = false;
 
       try {
+        const CORE_FIELDS = new Set(["amount", "phoneNumber", "provider", "stellarAddress"]);
+        const metadata = Object.fromEntries(
+          Object.entries(row).filter(([k]) => !CORE_FIELDS.has(k) && row[k] !== ""),
+        );
         const transaction = await transactionModel.create({
           type: "deposit",
           amount: row.amount,
@@ -232,6 +239,7 @@ export const bulkRoutes = Router();
 bulkRoutes.post(
   "/",
   authenticateToken,
+  checkAccountStatusStrict,
   upload.single("file"),
   async (req: Request, res: Response) => {
     if (!req.file) {

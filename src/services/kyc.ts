@@ -140,7 +140,7 @@ export class KYCService {
   constructor(db: Pool) {
     this.db = db;
     this.baseURL = process.env.KYC_API_URL || 'https://api.eu.onfido.com/v3.6';
-    this.apiKey = process.env.KYC_API_KEY || '';
+    this.apiKey = process.env.KYC_API_KEY || (process.env.NODE_ENV === 'test' ? 'test_key' : '');
 
     if (!this.apiKey) {
       throw new Error('KYC_API_KEY environment variable is required');

@@ -1,8 +1,9 @@
 import { Router, Request, Response } from "express";
-import { pool } from "../config/database";
+import { pool, queryRead } from "../config/database";
 import { redisClient } from "../config/redis";
 import { requireAuth, AuthRequest } from "../middleware/auth";
 import { TimeoutPresets, haltOnTimedout } from "../middleware/timeout";
+import { amlService } from "../services/aml";
 
 export const reportsRoutes = Router();
 
@@ -41,13 +42,21 @@ interface ReconciliationReport {
   }>;
 }
 
-// Helper function to calculate fees (2% of amount)
-const calculateFee = (amount: number): number => {
-  return amount * 0.02;
+import { feeService } from "../services/feeService";
+
+// Helper function to calculate fees using dynamic configuration
+const calculateFee = async (amount: number): Promise<number> => {
+  try {
+    const result = await feeService.calculateFee(amount);
+    return result.fee;
+  } catch (error) {
+    console.warn("Failed to calculate dynamic fee, using fallback 2%:", error);
+    return amount * 0.02;
+  }
 };
 
 // Helper function to format CSV
-const formatCSV = (report: ReconciliationReport): string => {
+const formatCSV = async (report: ReconciliationReport): Promise<string> => {
   const headers = [
     'Date',
     'Provider',
@@ -74,7 +83,8 @@ const formatCSV = (report: ReconciliationReport): string => {
   ].join(','));
 
   // Add provider breakdown
-  Object.entries(report.byProvider).forEach(([provider, data]) => {
+  for (const [provider, data] of Object.entries(report.byProvider)) {
+    const providerFee = await calculateFee(data.volume);
     rows.push([
       report.period.start + ' to ' + report.period.end,
       provider,
@@ -83,9 +93,9 @@ const formatCSV = (report: ReconciliationReport): string => {
       '',
       '',
       data.volume.toString(),
-      calculateFee(data.volume).toString()
+      providerFee.toString()
     ].join(','));
-  });
+  }
 
   // Add daily breakdown if available
   if (report.dailyBreakdown) {
@@ -109,7 +119,6 @@ const formatCSV = (report: ReconciliationReport): string => {
 // GET /api/reports/reconciliation
 reportsRoutes.get(
   "/reconciliation",
-  TimeoutPresets.medium,
   haltOnTimedout,
   requireAuth,
   async (req: AuthRequest, res: Response) => {
@@ -151,9 +160,10 @@ reportsRoutes.get(
           const cached = await redisClient.get(cacheKey);
           if (cached) {
             console.log(`Cache hit for ${cacheKey}`);
+            const cachedStr = typeof cached === 'string' ? cached : cached.toString();
             return format === 'csv' 
-              ? res.header('Content-Type', 'text/csv').send(cached)
-              : res.json(JSON.parse(cached));
+              ? res.header('Content-Type', 'text/csv').send(cachedStr)
+              : res.json(JSON.parse(cachedStr));
           }
         } catch (cacheError) {
           console.warn("Cache read failed:", cacheError);
@@ -175,7 +185,7 @@ reportsRoutes.get(
         ORDER BY date DESC, provider
       `;
 
-      const result = await pool.query(query, [startDate, endDate]);
+       const result = await queryRead(query, [startDate, endDate]);
 
       // Process results
       const providerData: { [key: string]: { count: number; volume: number; successful: number; failed: number } } = {};
@@ -235,7 +245,7 @@ reportsRoutes.get(
 
       // Calculate success rate
       const successRate = totalTransactions > 0 ? (successfulTransactions / totalTransactions) * 100 : 0;
-      const totalFees = calculateFee(totalVolume);
+      const totalFees = await calculateFee(totalVolume);
 
       // Build provider breakdown
       const byProvider: { [provider: string]: { count: number; volume: number } } = {};
@@ -247,16 +257,17 @@ reportsRoutes.get(
       });
 
       // Build daily breakdown
-      const dailyBreakdown = Object.entries(dailyData)
-        .map(([date, data]) => ({
+      const dailyBreakdown = await Promise.all(
+        Object.entries(dailyData).map(async ([date, data]) => ({
           date,
           totalTransactions: data.total,
           successfulTransactions: data.successful,
           failedTransactions: data.failed,
           totalVolume: data.volume,
-          totalFees: calculateFee(data.volume)
+          totalFees: await calculateFee(data.volume)
         }))
-        .sort((a, b) => a.date.localeCompare(b.date));
+      );
+      dailyBreakdown.sort((a, b) => a.date.localeCompare(b.date));
 
       // Build report
       const report: ReconciliationReport = {
@@ -279,7 +290,7 @@ reportsRoutes.get(
       // Cache the result for 1 hour (3600 seconds)
       if (redisClient?.isOpen) {
         try {
-          const cacheValue = format === 'csv' ? formatCSV(report) : JSON.stringify(report);
+          const cacheValue = format === 'csv' ? await formatCSV(report) : JSON.stringify(report);
           await redisClient.setEx(cacheKey, 3600, cacheValue);
           console.log(`Cached ${cacheKey} for 1 hour`);
         } catch (cacheError) {
@@ -289,7 +300,7 @@ reportsRoutes.get(
 
       // Return response
       if (format === 'csv') {
-        const csv = formatCSV(report);
+        const csv = await formatCSV(report);
         res.header('Content-Type', 'text/csv');
         res.header('Content-Disposition', `attachment; filename="reconciliation_report_${startDate}_to_${endDate}.csv"`);
         return res.send(csv);
@@ -305,4 +316,54 @@ reportsRoutes.get(
       });
     }
   }
+);
+
+// GET /api/reports/aml
+reportsRoutes.get(
+  "/aml",
+  haltOnTimedout,
+  requireAuth,
+  async (req: AuthRequest, res: Response) => {
+    try {
+      const startDateRaw =
+        typeof req.query.startDate === "string"
+          ? req.query.startDate
+          : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
+              .toISOString()
+              .slice(0, 10);
+      const endDateRaw =
+        typeof req.query.endDate === "string"
+          ? req.query.endDate
+          : new Date().toISOString().slice(0, 10);
+
+      const startDate = new Date(startDateRaw);
+      const endDate = new Date(endDateRaw);
+
+      if (
+        Number.isNaN(startDate.getTime()) ||
+        Number.isNaN(endDate.getTime())
+      ) {
+        return res.status(400).json({
+          error: "Bad Request",
+          message: "Invalid date format. Use YYYY-MM-DD format",
+        });
+      }
+
+      if (startDate > endDate) {
+        return res.status(400).json({
+          error: "Bad Request",
+          message: "startDate must be before or equal to endDate",
+        });
+      }
+
+      const report = amlService.generateReport(startDate, endDate);
+      return res.json(report);
+    } catch (error) {
+      console.error("Error generating AML report:", error);
+      return res.status(500).json({
+        error: "Internal Server Error",
+        message: "Failed to generate AML report",
+      });
+    }
+  },
 );

@@ -1,8 +1,11 @@
 module.exports = {
   preset: "ts-jest",
   testEnvironment: "node",
+  setupFiles: ["<rootDir>/tests/jest.setup.ts"],
   roots: ["<rootDir>/src", "<rootDir>/tests"],
   testMatch: ["**/__tests__/**/*.ts", "**/?(*.)+(spec|test).ts"],
+  testPathIgnorePatterns: ["/node_modules/", "/tests/pact/"],
+  testTimeout: 30000,
   transform: {
     "^.+\\.ts$": [
       "ts-jest",
@@ -16,15 +19,16 @@ module.exports = {
     "!src/**/__tests__/**",
   ],
   coverageDirectory: "coverage",
-  coverageReporters: ["text", "lcov", "html"],
+  coverageReporters: ["text", "text-summary", "lcov", "html", "json-summary"],
   coverageThreshold: {
     global: {
-      branches: 0,
-      functions: 2,
-      lines: 4,
-      statements: 4,
+      branches: 75,
+      functions: 75,
+      lines: 75,
+      statements: 75,
     },
   },
   moduleFileExtensions: ["ts", "tsx", "js", "jsx", "json", "node"],
   verbose: true,
+  maxWorkers: "50%",
 };

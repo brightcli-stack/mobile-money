@@ -9,6 +9,7 @@ export const typeDefs = gql`
   type Transaction {
     id: ID!
     referenceNumber: String!
+    providerReference: String!
     type: String!
     amount: String!
     phoneNumber: String!
@@ -68,6 +69,8 @@ export const typeDefs = gql`
     investigating: Int!
     resolved: Int!
     rejected: Int!
+    reversed: Int!
+    upheld: Int!
   }
 
   type DisputeReport {
@@ -95,6 +98,23 @@ export const typeDefs = gql`
     errors: [BulkImportJobError!]!
     createdAt: String!
     completedAt: String
+  }
+
+  # Subscription types for real-time updates
+  type Subscription {
+    # Subscribe to transaction events
+    transactionCreated: Transaction!
+    transactionUpdated(id: ID): Transaction!
+    transactionCompleted: Transaction!
+    transactionFailed: Transaction!
+
+    # Subscribe to dispute events
+    disputeCreated: Dispute!
+    disputeUpdated(id: ID): Dispute!
+    disputeNoteAdded(disputeId: ID): DisputeNote!
+
+    # Subscribe to bulk import job events
+    bulkImportJobUpdated(jobId: ID!): BulkImportJob!
   }
 
   input DepositInput {
@@ -144,7 +164,11 @@ export const typeDefs = gql`
   type Query {
     me: User
     transaction(id: ID!): Transaction
-    transactions(limit: Int, offset: Int): [Transaction!]!
+    transactions(
+      limit: Int
+      offset: Int
+      providerReference: String
+    ): [Transaction!]!
     transactionByReferenceNumber(referenceNumber: String!): Transaction
     transactionsByTags(tags: [String!]!): [Transaction!]!
     dispute(id: ID!): Dispute

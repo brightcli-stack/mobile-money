@@ -8,6 +8,10 @@ export enum TransactionStatus {
   Completed = "completed",
   Failed = "failed",
   Cancelled = "cancelled",
+  Review = "review",
+  Dispute = "dispute",
+  Reversed = "reversed",
+  ClawedBack = "clawed_back",
 }
 
 /**
@@ -24,6 +28,7 @@ export interface TransactionFilters {
   offset: number;
   sortBy?: string;
   sortOrder?: "ASC" | "DESC";
+  reference?: string;
 }
 
 /**
@@ -36,10 +41,17 @@ export interface TransactionFilters {
  */
 export const parseStatusFilter = (statusParam: string | undefined): TransactionStatus[] => {
   if (!statusParam) {
-    return VALID_STATUSES;
+    return [];
   }
 
-  const statuses = statusParam.split(",").map((s) => s.trim().toLowerCase());
+  const statuses = statusParam
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter((s) => s.length > 0 && !/^[-]+$/.test(s));
+
+  if (statuses.length === 0) {
+    return [];
+  }
 
   // Validate all statuses
   const invalidStatuses = statuses.filter((s) => !VALID_STATUSES.includes(s as TransactionStatus));
@@ -62,8 +74,8 @@ export const buildStatusWhereClause = (statuses: TransactionStatus[]): string =>
   if (statuses.length === 0) return "";
   if (statuses.length === VALID_STATUSES.length) return "";
 
-  const placeholders = statuses.map(() => "?").join(", ");
-  return `status IN (${placeholders})`;
+  const values = statuses.map((status) => `'${status}'`).join(", ");
+  return `status IN (${values})`;
 };
 
 /**
@@ -75,16 +87,17 @@ export const validateTransactionFilters = (
   next: NextFunction
 ) => {
   try {
-    const { status, limit = 50, offset = 0 } = req.query;
+    const { status, limit = 50, offset = 0, reference } = req.query;
 
     // Validate limit
     const limitNum = parseInt(limit as string, 10);
-    if (isNaN(limitNum) || limitNum < 1 || limitNum > 1000) {
+    if (isNaN(limitNum) || limitNum < 1) {
       return res.status(400).json({
         error: "Invalid limit parameter",
-        message: "limit must be a number between 1 and 1000",
+        message: "limit must be a number greater than 0",
       });
     }
+    const cappedLimit = Math.min(limitNum, 1000);
 
     // Validate offset
     const offsetNum = parseInt(offset as string, 10);
@@ -110,8 +123,9 @@ export const validateTransactionFilters = (
     // Attach filters to request
     (req as any).transactionFilters = {
       statuses,
-      limit: limitNum,
+      limit: cappedLimit,
       offset: offsetNum,
+      reference: reference as string | undefined,
     };
 
     next();

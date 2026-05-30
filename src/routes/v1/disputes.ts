@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { VersionedRequest } from "../../middleware/apiVersion";
+import { setApiVersion } from "../../middleware/apiVersion";
 import { TimeoutPresets, haltOnTimedout } from "../../middleware/timeout";
 
 export const transactionDisputeRoutesV1 = Router();
@@ -13,10 +13,7 @@ transactionDisputeRoutesV1.post(
   "/:transactionId/dispute",
   TimeoutPresets.long,
   haltOnTimedout,
-  (req: VersionedRequest, res, next) => {
-    req.apiVersion = "v1";
-    next();
-  }
+  setApiVersion("v1")
   // Add dispute creation handler
 );
 
@@ -24,10 +21,7 @@ transactionDisputeRoutesV1.get(
   "/:transactionId/disputes",
   TimeoutPresets.quick,
   haltOnTimedout,
-  (req: VersionedRequest, res, next) => {
-    req.apiVersion = "v1";
-    next();
-  }
+  setApiVersion("v1")
   // Add get disputes handler
 );
 
@@ -39,10 +33,7 @@ disputeRoutesV1.get(
   "/",
   TimeoutPresets.quick,
   haltOnTimedout,
-  (req: VersionedRequest, res, next) => {
-    req.apiVersion = "v1";
-    next();
-  }
+  setApiVersion("v1")
   // Add list disputes handler
 );
 
@@ -50,10 +41,7 @@ disputeRoutesV1.get(
   "/:disputeId",
   TimeoutPresets.quick,
   haltOnTimedout,
-  (req: VersionedRequest, res, next) => {
-    req.apiVersion = "v1";
-    next();
-  }
+  setApiVersion("v1")
   // Add get dispute handler
 );
 
@@ -61,9 +49,6 @@ disputeRoutesV1.patch(
   "/:disputeId",
   TimeoutPresets.long,
   haltOnTimedout,
-  (req: VersionedRequest, res, next) => {
-    req.apiVersion = "v1";
-    next();
-  }
+  setApiVersion("v1")
   // Add update dispute handler
 );

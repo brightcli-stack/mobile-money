@@ -12,45 +12,65 @@
 version: "3.9"
 
 services:
-  # ---------------------------------------------------------------------------
-  # PostgreSQL
-  # ---------------------------------------------------------------------------
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: mobilemoney_app
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: development
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      DATABASE_URL: postgresql://user:password@postgres:5432/mobilemoney_stellar
+      REDIS_URL: redis://redis:6379
+      # Loki transport — optional, falls back to stdout when unset
+      LOKI_HOST: ${LOKI_HOST:-http://loki:3100}
+      SERVICE_NAME: ${SERVICE_NAME:-mobile-money-api}
+    ports:
+      - "3000:3000"
+    networks:
+      - mobilemoney_net
+    logging:
+      driver: "json-file"
+      options:
+        tag: "{{.Name}}"
+
   postgres:
     image: postgres:16-alpine
     container_name: mobilemoney_postgres
-    restart: unless-stopped
     environment:
       POSTGRES_USER: user
       POSTGRES_PASSWORD: password
       POSTGRES_DB: mobilemoney_stellar
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./database/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
-      - ./database/migrations:/docker-entrypoint-initdb.d/migrations:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U user -d mobilemoney_stellar"]
       interval: 5s
       timeout: 5s
-      retries: 10
+      retries: 5
+    networks:
+      - mobilemoney_net
 
-  # ---------------------------------------------------------------------------
-  # Redis
-  # ---------------------------------------------------------------------------
   redis:
     image: redis:7-alpine
     container_name: mobilemoney_redis
-    restart: unless-stopped
-    ports:
-      - "6379:6379"
+    command: redis-server /usr/local/etc/redis/redis.conf
     volumes:
+      - ./redis.conf:/usr/local/etc/redis/redis.conf:ro
       - redis_data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 3s
-      retries: 10
+      retries: 5
+    networks:
+      - mobilemoney_net
 
   # ---------------------------------------------------------------------------
   # Mock SMTP Server (Maildev)
@@ -114,18 +134,41 @@ services:
       STELLAR_HORIZON_URL: http://stellar:8000
       STELLAR_NETWORK: local
     ports:
-      - "${PORT:-3000}:3000"
+      - "3100:3100"
     volumes:
-      # Mount source so edits reflect immediately without rebuilding
-      - .:/app
-      - /app/node_modules
-    healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:3000/health || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 15s
+      - ./logging/loki-config.yaml:/etc/loki/local-config.yaml
+    command: -config.file=/etc/loki/local-config.yaml
+    networks:
+      - mobilemoney_net
+
+  promtail:
+    image: grafana/promtail:latest
+    container_name: mobilemoney_promtail
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./logging/promtail-config.yaml:/etc/promtail/config.yml
+    command: -config.file=/etc/promtail/config.yml
+    networks:
+      - mobilemoney_net
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: mobilemoney_grafana
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_PATHS_PROVISIONING=/etc/grafana/provisioning
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./logging/grafana/provisioning:/etc/grafana/provisioning
+    networks:
+      - mobilemoney_net
+
+networks:
+  mobilemoney_net:
+    driver: bridge
 
 volumes:
-  postgres_data:
+  grafana_data:
   redis_data:

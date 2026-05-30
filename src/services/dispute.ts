@@ -25,8 +25,11 @@ import {
   Dispute,
   DisputeNote,
   DisputeWithNotes,
+  DisputeWithDetails,
+  DisputeEvidence,
   DisputeReportRow,
   DisputeStatus,
+  DisputePriority,
   ReportFilter,
 } from "../models/dispute";
 import { TransactionModel, TransactionStatus } from "../models/transaction";
@@ -36,13 +39,22 @@ import { TransactionModel, TransactionStatus } from "../models/transaction";
 // ---------------------------------------------------------------------------
 
 const TRANSITIONS: Record<DisputeStatus, DisputeStatus[]> = {
-  open: ["investigating", "resolved", "rejected"],
-  investigating: ["resolved", "rejected"],
+  open: ["investigating", "resolved", "rejected", "reversed", "upheld"],
+  investigating: ["resolved", "rejected", "reversed", "upheld"],
   resolved: [],
   rejected: [],
+  reversed: [],
+  upheld: [],
 };
 
-const TERMINAL_STATUSES: DisputeStatus[] = ["resolved", "rejected"];
+const TERMINAL_STATUSES: DisputeStatus[] = [
+  "resolved",
+  "rejected",
+  "reversed",
+  "upheld",
+];
+
+export type DisputeResolutionAction = "reverse" | "uphold";
 
 // ---------------------------------------------------------------------------
 // Notification helper
@@ -83,11 +95,15 @@ export class DisputeService {
    * @param transactionId  UUID of the target transaction.
    * @param reason         Human-readable description of the issue.
    * @param reportedBy     Identifier of the person raising the dispute (optional).
+   * @param priority       Priority level (optional, defaults to 'medium').
+   * @param category       Dispute category (optional).
    */
   async openDispute(
     transactionId: string,
     reason: string,
     reportedBy?: string,
+    priority?: DisputePriority,
+    category?: string,
   ): Promise<Dispute> {
     const transaction = await this.transactionModel.findById(transactionId);
     if (!transaction) {
@@ -115,7 +131,14 @@ export class DisputeService {
       transactionId,
       reason,
       reportedBy,
+      priority,
+      category,
     });
+
+    await this.transactionModel.updateStatus(
+      transactionId,
+      TransactionStatus.Dispute,
+    );
 
     sendNotification({
       event: "dispute.opened",
@@ -123,7 +146,7 @@ export class DisputeService {
       transactionId: dispute.transactionId,
       status: dispute.status,
       message: `Dispute opened for transaction ${transactionId}`,
-      metadata: { reason, reportedBy },
+      metadata: { reason, reportedBy, priority: dispute.priority, category },
     });
 
     return dispute;
@@ -134,6 +157,17 @@ export class DisputeService {
    */
   async getDispute(disputeId: string): Promise<DisputeWithNotes> {
     const dispute = await this.disputeModel.findByIdWithNotes(disputeId);
+    if (!dispute) {
+      throw new Error(`Dispute ${disputeId} not found`);
+    }
+    return dispute;
+  }
+
+  /**
+   * Retrieve a dispute by ID with full details (notes, evidence, timeline).
+   */
+  async getDisputeWithDetails(disputeId: string): Promise<DisputeWithDetails> {
+    const dispute = await this.disputeModel.findByIdWithDetails(disputeId);
     if (!dispute) {
       throw new Error(`Dispute ${disputeId} not found`);
     }
@@ -191,6 +225,205 @@ export class DisputeService {
     });
 
     return updated;
+  }
+
+  /**
+   * Resolve a disputed payment by reversing it for the customer or upholding it
+   * for the merchant.
+   */
+  async resolvePayment(
+    disputeId: string,
+    action: DisputeResolutionAction,
+    resolution: string,
+    adminId?: string,
+  ): Promise<Dispute> {
+    if (!resolution || resolution.trim().length === 0) {
+      throw new Error("Resolution text is required");
+    }
+
+    const dispute = await this.disputeModel.findById(disputeId);
+    if (!dispute) {
+      throw new Error(`Dispute ${disputeId} not found`);
+    }
+
+    if (TERMINAL_STATUSES.includes(dispute.status)) {
+      throw new Error(`Cannot resolve a ${dispute.status} dispute`);
+    }
+
+    const nextDisputeStatus: DisputeStatus =
+      action === "reverse" ? "reversed" : "upheld";
+    const nextTransactionStatus =
+      action === "reverse"
+        ? TransactionStatus.Reversed
+        : TransactionStatus.Completed;
+    const trimmedResolution = resolution.trim();
+
+    const updated = await this.disputeModel.update(disputeId, {
+      status: nextDisputeStatus,
+      resolution: trimmedResolution,
+      assignedTo: adminId,
+    });
+
+    await this.transactionModel.updateStatus(
+      dispute.transactionId,
+      nextTransactionStatus,
+    );
+
+    await this.disputeModel.addNote(
+      disputeId,
+      adminId ?? "admin",
+      `Admin ${action === "reverse" ? "reversed" : "upheld"} payment: ${trimmedResolution}`,
+    );
+
+    sendNotification({
+      event: `dispute.payment_${action === "reverse" ? "reversed" : "upheld"}`,
+      disputeId: updated.id,
+      transactionId: updated.transactionId,
+      status: updated.status,
+      message: `Payment dispute ${disputeId} was ${nextDisputeStatus}`,
+      metadata: {
+        previousStatus: dispute.status,
+        resolution: trimmedResolution,
+        adminId,
+        transactionStatus: nextTransactionStatus,
+      },
+    });
+
+    return updated;
+  }
+
+  /**
+   * Update dispute fields (priority, category, internal notes).
+   *
+   * @param disputeId      UUID of the dispute.
+   * @param updates        Fields to update.
+   */
+  async updateDispute(
+    disputeId: string,
+    updates: {
+      priority?: DisputePriority;
+      category?: string;
+      internalNotes?: string;
+    },
+  ): Promise<Dispute> {
+    const dispute = await this.disputeModel.findById(disputeId);
+    if (!dispute) {
+      throw new Error(`Dispute ${disputeId} not found`);
+    }
+
+    const updated = await this.disputeModel.update(disputeId, updates);
+
+    sendNotification({
+      event: "dispute.updated",
+      disputeId: updated.id,
+      transactionId: updated.transactionId,
+      status: updated.status,
+      message: `Dispute ${disputeId} updated`,
+      metadata: updates,
+    });
+
+    return updated;
+  }
+
+  /**
+   * Add evidence attachment to a dispute.
+   *
+   * @param disputeId    UUID of the dispute.
+   * @param fileName     Original file name.
+   * @param fileType     MIME type.
+   * @param fileSize     File size in bytes.
+   * @param s3Key        S3 object key.
+   * @param s3Url        S3 object URL.
+   * @param uploadedBy   User who uploaded the file.
+   * @param description  Optional description.
+   */
+  async addEvidence(
+    disputeId: string,
+    fileName: string,
+    fileType: string,
+    fileSize: number,
+    s3Key: string,
+    s3Url: string,
+    uploadedBy: string,
+    description?: string,
+  ): Promise<DisputeEvidence> {
+    const dispute = await this.disputeModel.findById(disputeId);
+    if (!dispute) {
+      throw new Error(`Dispute ${disputeId} not found`);
+    }
+
+    const evidence = await this.disputeModel.addEvidence(
+      disputeId,
+      fileName,
+      fileType,
+      fileSize,
+      s3Key,
+      s3Url,
+      uploadedBy,
+      description,
+    );
+
+    sendNotification({
+      event: "dispute.evidence_added",
+      disputeId: dispute.id,
+      transactionId: dispute.transactionId,
+      status: dispute.status,
+      message: `Evidence "${fileName}" added to dispute ${disputeId}`,
+      metadata: { fileName, fileType, fileSize, uploadedBy },
+    });
+
+    return evidence;
+  }
+
+  /**
+   * Get all evidence for a dispute.
+   */
+  async getEvidence(disputeId: string): Promise<DisputeEvidence[]> {
+    const dispute = await this.disputeModel.findById(disputeId);
+    if (!dispute) {
+      throw new Error(`Dispute ${disputeId} not found`);
+    }
+
+    return this.disputeModel.getEvidence(disputeId);
+  }
+
+  /**
+   * Check for disputes approaching SLA deadline and send warnings.
+   */
+  async processSlaWarnings(): Promise<{ warningsSent: number }> {
+    const candidates = await this.disputeModel.findSlaWarningCandidates();
+    let warningsSent = 0;
+
+    for (const dispute of candidates) {
+      try {
+        sendNotification({
+          event: "dispute.sla_warning",
+          disputeId: dispute.id,
+          transactionId: dispute.transactionId,
+          status: dispute.status,
+          message: `Dispute ${dispute.id} is approaching SLA deadline`,
+          metadata: {
+            slaDueDate: dispute.slaDueDate,
+            priority: dispute.priority,
+            assignedTo: dispute.assignedTo,
+          },
+        });
+
+        await this.disputeModel.markSlaWarningSent(dispute.id);
+        warningsSent++;
+      } catch (error) {
+        console.error(`Failed to send SLA warning for dispute ${dispute.id}:`, error);
+      }
+    }
+
+    return { warningsSent };
+  }
+
+  /**
+   * Get overdue disputes.
+   */
+  async getOverdueDisputes(): Promise<Dispute[]> {
+    return this.disputeModel.findOverdueDisputes();
   }
 
   /**
@@ -271,6 +504,8 @@ export class DisputeService {
       investigating: number;
       resolved: number;
       rejected: number;
+      reversed: number;
+      upheld: number;
     };
   }> {
     const rows = await this.disputeModel.generateReport(filter);
@@ -281,6 +516,8 @@ export class DisputeService {
       investigating: 0,
       resolved: 0,
       rejected: 0,
+      reversed: 0,
+      upheld: 0,
     };
     for (const row of rows) {
       const count = parseInt(row.count, 10);

@@ -1,4 +1,4 @@
-import { connection } from "./config";
+import { rabbitMQManager } from "./rabbitmq";
 import { transactionQueue } from "./transactionQueue";
 import { transactionWorker, closeWorker } from "./worker";
 import { syncQueue } from "./syncQueue";
@@ -45,4 +45,41 @@ export {
   pauseQueueEndpoint,
   resumeQueueEndpoint,
 } from "./health";
+export {
+  getQueueDepth,
+  queueDepthHandler,
+  queueDepthPrometheusHandler,
+} from "./queueDepthMetrics";
+
 export { queueOptions } from "./config";
+export { deadLetterQueue, DLQ_NAME, capturePersistentFailure } from "./dlq";
+export { startProviderBalanceAlertWorker, scheduleProviderBalanceAlertJob };
+
+// Account Merge Queue Exports
+export {
+  accountMergeQueue,
+  addAccountMergeJob,
+  addBatchAccountMergeJobs,
+  getAccountMergeJobById,
+  getAccountMergeQueueStats,
+  pauseAccountMergeQueue,
+  resumeAccountMergeQueue,
+  drainAccountMergeQueue,
+  closeAccountMergeQueue,
+} from "./accountMergeQueue";
+export type {
+  AccountMergeJobData,
+  AccountMergeJobResult,
+} from "./accountMergeQueue";
+export {
+  accountMergeWorker,
+  closeAccountMergeWorker,
+} from "./accountMergeWorker";
+
+export {
+  startAccountingTokenRefreshWorker,
+  closeAccountingTokenRefreshWorker,
+};
+
+// Trace-ID propagation utilities
+export { withTraceId, traceIdFromJob, childLoggerWithTrace, TRACE_ID_KEY } from "./trace";

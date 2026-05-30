@@ -1,37 +1,43 @@
-import { Request, Response, NextFunction } from 'express';
-import { verifyTOTPToken, verifyBackupCode, is2FAEnabled } from '../auth/2fa';
-import { getUserById } from '../services/userService';
-
-declare global {
-  namespace Express {
-    interface Request {
-      twoFactorVerified?: boolean;
-    }
-  }
-}
+import { Request, Response, NextFunction } from "express";
+import {
+  verifyTOTPToken,
+  verifyBackupCode,
+  is2FAEnabled,
+  type BackupCode,
+} from "../auth/2fa";
+// import { getUserById } from "../services/userService";
 
 /**
  * Middleware to require 2FA verification for sensitive operations
  * Checks for TOTP token in header or backup code in body
  */
-export function requireTwoFactor(req: Request, res: Response, next: NextFunction) {
-  return async (err: any, _req: Request, _res: Response, _next: NextFunction) => {
+export function requireTwoFactor(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) {
+  return async (
+    err: any,
+    _req: Request,
+    _res: Response,
+    _next: NextFunction,
+  ) => {
     if (err) return next(err);
 
     if (!req.jwtUser) {
       return res.status(401).json({
-        error: 'Authentication required',
-        message: 'Valid JWT token required'
+        error: "Authentication required",
+        message: "Valid JWT token required",
       });
     }
 
     try {
-      // Get user information
-      const user = await getUserById(req.jwtUser.userId);
+      // Use user object from res.locals (populated by attachUserObject middleware)
+      const user = res.locals.user;
       if (!user) {
         return res.status(404).json({
-          error: 'User not found',
-          message: 'User associated with token no longer exists'
+          error: "User not found",
+          message: "User associated with token no longer exists",
         });
       }
 
@@ -43,8 +49,8 @@ export function requireTwoFactor(req: Request, res: Response, next: NextFunction
       }
 
       // Check for TOTP token in headers
-      const totpToken = req.headers['x-2fa-token'] as string;
-      
+      const totpToken = req.headers["x-2fa-token"] as string;
+
       if (totpToken) {
         // Verify TOTP token
         const isValid = verifyTOTPToken(user.two_factor_secret!, totpToken);
@@ -55,11 +61,24 @@ export function requireTwoFactor(req: Request, res: Response, next: NextFunction
       }
 
       // Check for backup code in request body
-      const backupCode = req.body['backupCode'] || req.body['backup_code'];
-      
+      const backupCode = req.body["backupCode"] || req.body["backup_code"];
+
       if (backupCode && user.backup_codes) {
+        const backupCodes: BackupCode[] = user.backup_codes.map((item, index) =>
+          typeof item === 'string'
+            ? {
+                id: String(index),
+                code_hash: item,
+                used: false,
+                created_at: new Date(0),
+              }
+            : item,
+        );
         // Verify backup code
-        const verification = await verifyBackupCode(backupCode, user.backup_codes);
+        const verification = await verifyBackupCode(
+          backupCode,
+          user.backup_codes as unknown as BackupCode[],
+        );
         if (verification.valid) {
           req.twoFactorVerified = true;
           // Mark backup code as used (this would typically update the database)
@@ -69,18 +88,19 @@ export function requireTwoFactor(req: Request, res: Response, next: NextFunction
 
       // If we reach here, 2FA verification failed
       return res.status(403).json({
-        error: 'Two-factor authentication required',
-        message: 'This operation requires two-factor authentication',
+        error: "Two-factor authentication required",
+        message: "This operation requires two-factor authentication",
         required: true,
         methods: {
-          totp: 'Provide TOTP token in X-2FA-Token header',
-          backupCode: 'Provide backup code in request body as backupCode or backup_code'
-        }
+          totp: "Provide TOTP token in X-2FA-Token header",
+          backupCode:
+            "Provide backup code in request body as backupCode or backup_code",
+        },
       });
     } catch (error) {
       return res.status(500).json({
-        error: '2FA verification failed',
-        message: error instanceof Error ? error.message : 'Unknown error'
+        error: "2FA verification failed",
+        message: error instanceof Error ? error.message : "Unknown error",
       });
     }
   };
@@ -90,14 +110,18 @@ export function requireTwoFactor(req: Request, res: Response, next: NextFunction
  * Middleware to check if 2FA is verified
  * Used after requireTwoFactor to ensure verification was successful
  */
-export function ensureTwoFactorVerified(req: Request, res: Response, next: NextFunction) {
+export function ensureTwoFactorVerified(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) {
   if (req.twoFactorVerified) {
     return next();
   }
 
   return res.status(403).json({
-    error: 'Two-factor authentication not verified',
-    message: 'This operation requires verified two-factor authentication'
+    error: "Two-factor authentication not verified",
+    message: "This operation requires verified two-factor authentication",
   });
 }
 
@@ -105,24 +129,33 @@ export function ensureTwoFactorVerified(req: Request, res: Response, next: NextF
  * Middleware to optionally require 2FA
  * Allows operation to proceed if 2FA is not enabled, but requires it if enabled
  */
-export function optionalTwoFactor(req: Request, res: Response, next: NextFunction) {
-  return async (err: any, _req: Request, _res: Response, _next: NextFunction) => {
+export function optionalTwoFactor(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) {
+  return async (
+    err: any,
+    _req: Request,
+    _res: Response,
+    _next: NextFunction,
+  ) => {
     if (err) return next(err);
 
     if (!req.jwtUser) {
       return res.status(401).json({
-        error: 'Authentication required',
-        message: 'Valid JWT token required'
+        error: "Authentication required",
+        message: "Valid JWT token required",
       });
     }
 
     try {
-      // Get user information
-      const user = await getUserById(req.jwtUser.userId);
+      // Use user object from res.locals (populated by attachUserObject middleware)
+      const user = res.locals.user;
       if (!user) {
         return res.status(404).json({
-          error: 'User not found',
-          message: 'User associated with token no longer exists'
+          error: "User not found",
+          message: "User associated with token no longer exists",
         });
       }
 
@@ -133,8 +166,8 @@ export function optionalTwoFactor(req: Request, res: Response, next: NextFunctio
       }
 
       // If 2FA is enabled, check for verification
-      const totpToken = req.headers['x-2fa-token'] as string;
-      
+      const totpToken = req.headers["x-2fa-token"] as string;
+
       if (totpToken) {
         const isValid = verifyTOTPToken(user.two_factor_secret!, totpToken);
         if (isValid) {
@@ -144,10 +177,13 @@ export function optionalTwoFactor(req: Request, res: Response, next: NextFunctio
       }
 
       // Check for backup code
-      const backupCode = req.body['backupCode'] || req.body['backup_code'];
-      
+      const backupCode = req.body["backupCode"] || req.body["backup_code"];
+
       if (backupCode && user.backup_codes) {
-        const verification = await verifyBackupCode(backupCode, user.backup_codes);
+        const verification = await verifyBackupCode(
+          backupCode,
+          user.backup_codes as unknown as BackupCode[],
+        );
         if (verification.valid) {
           req.twoFactorVerified = true;
           return next();
@@ -160,8 +196,8 @@ export function optionalTwoFactor(req: Request, res: Response, next: NextFunctio
       return next();
     } catch (error) {
       return res.status(500).json({
-        error: '2FA check failed',
-        message: error instanceof Error ? error.message : 'Unknown error'
+        error: "2FA check failed",
+        message: error instanceof Error ? error.message : "Unknown error",
       });
     }
   };
