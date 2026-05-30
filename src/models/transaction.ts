@@ -87,6 +87,8 @@ export interface Transaction {
   webhook_delivered_at?: Date | null;
   webhook_last_error?: string | null;
   metadata: Record<string, unknown>;
+  retryCount?: number;
+  userId?: string | null;
   createdAt: Date;
   updatedAt?: Date | null;
 }
@@ -104,6 +106,10 @@ export interface CreateTransactionInput {
   idempotencyKey?: string | null;
   idempotencyExpiresAt?: Date | null;
   metadata?: Record<string, unknown> | null;
+  currency?: string;
+  originalAmount?: string;
+  convertedAmount?: string;
+  retryCount?: number;
 }
 
 export interface WebhookDeliveryUpdate {
@@ -130,14 +136,14 @@ export function mapTransactionRow(
     status: row.status as TransactionStatus,
     tags: Array.isArray(row.tags) ? (row.tags as string[]) : [],
     notes:
-      row.notes != null && row.notes !== ""
-        ? String(row.notes)
-        : undefined,
+      row.notes != null && row.notes !== "" ? String(row.notes) : undefined,
     admin_notes:
       row.admin_notes != null && row.admin_notes !== ""
         ? String(row.admin_notes)
         : undefined,
-    retryCount: Number(row.retry_count ?? 0),
+    userId: row.user_id != null ? String(row.user_id) : undefined,
+    retryCount: row.retry_count != null ? Number(row.retry_count) : undefined,
+    metadata: (row.metadata as Record<string, unknown>) ?? {},
     createdAt:
       created instanceof Date ? created : new Date(String(created ?? "")),
   };
@@ -151,8 +157,12 @@ export class TransactionModel {
     const referenceNumber = await generateReferenceNumber();
 
     const result = await pool.query(
-      `INSERT INTO transactions (reference_number, type, amount, currency, original_amount, converted_amount, phone_number, provider, stellar_address, status, tags, notes)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+      `INSERT INTO transactions (
+        reference_number, type, amount, currency, original_amount, converted_amount,
+        phone_number, provider, stellar_address, status, tags, notes,
+        user_id, idempotency_key, idempotency_expires_at, metadata
+      )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
        RETURNING *`,
       [
         referenceNumber,
@@ -174,7 +184,7 @@ export class TransactionModel {
       ],
     );
 
-    return result.rows[0];
+    return result.rows[0] as Transaction;
   }
 
   async findById(id: string): Promise<Transaction | null> {
@@ -189,12 +199,17 @@ export class TransactionModel {
   }
 
   /** Paginated list, newest first. `limit` is capped at 100. */
-  async list(limit = 50, offset = 0, startDate?: string, endDate?: string): Promise<Transaction[]> {
+  async list(
+    limit = 50,
+    offset = 0,
+    startDate?: string,
+    endDate?: string,
+  ): Promise<Transaction[]> {
     const capped = Math.min(Math.max(limit, 1), 100);
     const off = Math.max(offset, 0);
-    
+
     let query = "SELECT * FROM transactions WHERE 1=1";
-    const params: any[] = [];
+    const params: unknown[] = [];
     let paramIndex = 1;
 
     if (startDate) {
@@ -209,13 +224,13 @@ export class TransactionModel {
     query += ` ORDER BY created_at DESC LIMIT $${paramIndex++} OFFSET $${paramIndex++}`;
     params.push(capped, off);
 
-    const result = await pool.query(query, params);
+    const result = await pool.query<Transaction>(query, params);
     return result.rows;
   }
 
   async count(startDate?: string, endDate?: string): Promise<number> {
     let query = "SELECT COUNT(*) FROM transactions WHERE 1=1";
-    const params: any[] = [];
+    const params: unknown[] = [];
     let paramIndex = 1;
 
     if (startDate) {
@@ -330,7 +345,7 @@ export class TransactionModel {
     userId: string,
     since: Date,
   ): Promise<Transaction[]> {
-    const result = await pool.query<Transaction>(
+    const result = await pool.query<Record<string, unknown>>(
       `SELECT ${TRANSACTION_SELECT_COLUMNS}
        FROM transactions
        WHERE user_id = $1
@@ -346,7 +361,7 @@ export class TransactionModel {
 
   /** Increments retry_count after a failed transient attempt (before the next try). */
   async incrementRetryCount(id: string): Promise<number> {
-    const r = await pool.query(
+    const result = await pool.query<{ retry_count: number }>(
       `UPDATE transactions
        SET retry_count = retry_count + 1,
            updated_at = CURRENT_TIMESTAMP
@@ -355,7 +370,7 @@ export class TransactionModel {
       [id],
     );
 
-    return result.rows;
+    return result.rows[0].retry_count;
   }
 
   async updateNotes(id: string, notes: string): Promise<Transaction | null> {
@@ -538,6 +553,18 @@ export class TransactionModel {
     return { transactions: result.rows, total };
   }
 
+  async releaseAllExpiredIdempotencyKeys(): Promise<number> {
+    const result = await pool.query(
+      `UPDATE transactions
+       SET idempotency_key = NULL,
+           idempotency_expires_at = NULL,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE idempotency_expires_at IS NOT NULL
+         AND idempotency_expires_at <= CURRENT_TIMESTAMP`,
+    );
+    return result.rowCount ?? 0;
+  }
+
   async releaseExpiredIdempotencyKey(idempotencyKey: string): Promise<void> {
     await pool.query(
       `UPDATE transactions
@@ -571,7 +598,8 @@ export class TransactionModel {
   }
 
   async countByStatuses(statuses: TransactionStatus[]): Promise<number> {
-    const validStatuses = statuses.length > 0 ? statuses : Object.values(TransactionStatus);
+    const validStatuses =
+      statuses.length > 0 ? statuses : Object.values(TransactionStatus);
     const result = await pool.query<{ total: number }>(
       `SELECT COUNT(*)::int AS total
        FROM transactions
@@ -589,7 +617,8 @@ export class TransactionModel {
   ): Promise<Transaction[]> {
     const capped = Math.min(Math.max(limit, 1), 1000);
     const off = Math.max(offset, 0);
-    const validStatuses = statuses.length > 0 ? statuses : Object.values(TransactionStatus);
+    const validStatuses =
+      statuses.length > 0 ? statuses : Object.values(TransactionStatus);
 
     const result = await pool.query<Transaction>(
       `SELECT ${TRANSACTION_SELECT_COLUMNS}

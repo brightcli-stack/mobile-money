@@ -6,6 +6,7 @@ import { TransactionModel, TransactionStatus } from "../models/transaction";
 import { MobileMoneyService } from "../services/mobilemoney/mobileMoneyService";
 import { StellarService } from "../services/stellar/stellarService";
 import { notifyTransactionWebhook, WebhookService } from "../services/webhook";
+import { authenticateToken } from "../middleware/auth";
 
 interface CsvRow {
   amount: string;
@@ -141,7 +142,8 @@ async function processJob(jobId: string, rows: CsvRow[]): Promise<void> {
           provider: row.provider.toUpperCase(),
           stellarAddress: row.stellarAddress,
           status: TransactionStatus.Pending,
-          tags: [],
+          tags: [jobId],
+          metadata: { batchId: jobId },
         });
         transactionId = transaction.id;
 
@@ -169,10 +171,14 @@ async function processJob(jobId: string, rows: CsvRow[]): Promise<void> {
           transaction.id,
           TransactionStatus.Completed,
         );
-        await notifyTransactionWebhook(transaction.id, "transaction.completed", {
-          transactionModel,
-          webhookService,
-        });
+        await notifyTransactionWebhook(
+          transaction.id,
+          "transaction.completed",
+          {
+            transactionModel,
+            webhookService,
+          },
+        );
 
         job.succeeded++;
       } catch (error) {
