@@ -1,33 +1,15 @@
-## Description
+# Pull Request Description
 
-Implemented strict GraphQL query complexity limiting using the `graphql-query-complexity` plugin. Set maximum complexity to 500 points per request to protect the Apollo server from maliciously complex queries.
+**Title:** `feat: implement strict GraphQL query complexity limiting`
 
-## Related Issue
+### 📖 Summary
+Implemented strict query complexity limiting on the Apollo server setup using `graphql-query-complexity`. This prevents malicious clients from constructing extremely complex nested queries that can crash the server.
 
-Implements issue #? (Replace with actual issue number)
+### 🛠️ Changes
+- Configured the `graphql-query-complexity` validation rule in Apollo Server.
+- Enforced a maximum complexity of 500 points per request.
+- Adjusted query complexity tests to match the new limit.
 
-## Type of Change
-
-- [x] Bug fix
-- [ ] New feature
-- [ ] Documentation update
-- [ ] Code refactoring
-- [ ] Performance improvement
-
-## Changes Made
-
-- Added `createComplexityRule` with `maximumComplexity: 500` to ApolloServer validation rules in `src/graphql/server.ts`.
-- Updated comment formatting for clarity.
-
-## Testing
-
-- Added/updated unit tests in `src/tests/graphql-depth-complexity.test.ts` to verify that queries exceeding the complexity limit are rejected and valid queries pass.
-
-## Checklist
-
-- [x] Code follows project style
-- [x] Self-reviewed my code
-- [x] Commented complex code
-- [x] Updated documentation
-- [x] No new warnings
-- [x] Added tests (if applicable)
+### ✅ Verification
+- Verified validation rules in `src/graphql/server.ts`.
+- Verified and updated query complexity tests in `src/tests/graphql-depth-complexity.test.ts`.
