@@ -6,8 +6,10 @@ import { pool } from "../config/database";
 import {
   getWithdrawal2FASettings,
   updateMandatory2FAWithdrawals,
-  verifyWithdrawal2FA
+  verifyWithdrawal2FA,
 } from "../controllers/twoFactorWithdrawalController";
+import { ERROR_CODES } from "../constants/errorCodes";
+import { createError } from "../middleware/errorHandler";
 
 const router = Router();
 
@@ -22,7 +24,9 @@ router.post(
       const userId = req.user?.id ?? "";
 
       if (!file) {
-        return res.status(400).json({ error: "No image provided" });
+         throw createError(ERROR_CODES.INVALID_INPUT, "No image provided" , {
+          error: "No image provided" ,
+        });
       }
 
       const uploadResult = await uploadToS3({
@@ -32,7 +36,9 @@ router.post(
       });
 
       if (!uploadResult.success) {
-        return res.status(500).json({ error: uploadResult.error });
+        throw createError(ERROR_CODES.INTERNAL_ERROR, uploadResult.error, {
+          error: uploadResult.error,
+        });
       }
 
       const avatarUrl = uploadResult.fileUrl;
@@ -51,7 +57,13 @@ router.post(
       });
     } catch (error) {
       console.error("Controller upload error:", error);
-      res.status(500).json({ error: "Internal server error during upload" });
+      throw createError(
+        ERROR_CODES.INTERNAL_ERROR,
+        "Internal server error during upload",
+        {
+          error: "Internal server error during upload",
+        },
+      );
     }
   },
 );

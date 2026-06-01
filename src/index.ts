@@ -1,5 +1,6 @@
 // Initialize centralized configuration first
-import './config/init';
+import "./config/init";
+import "./config/init";
 
 import "./tracer";
 import path from "path";
@@ -12,15 +13,13 @@ import spdy from "spdy";
 import https from "https";
 import fs from "fs";
 import session from "express-session";
-import * as Sentry from "@sentry/node";
-import { register } from "prom-client";
-import { startStellarExporter } from "./services/stellarExporter";
-
+import type { SessionOptions } from "express-session";
 import {
   apiVersionMiddleware,
   validateVersionMiddleware,
   VersionedRequest,
 } from "./middleware/apiVersion";
+import { getConfigValue } from "./config";
 import {
   bulkRoutesV1,
   disputeRoutesV1,
@@ -47,7 +46,8 @@ import kycTierUpgradeRoutes from "./routes/kycTierUpgradeRoutes";
 import { makerCheckerRoutes } from "./routes/makerChecker";
 import { userRoutes } from "./routes/users";
 import { auditRoutes } from "./routes/audit";
-import { errorHandler } from "./middleware/errorHandler";
+import { createError, errorHandler } from "./middleware/errorHandler";
+import { accountingRoutes } from "./routes/accounting";
 import {
   connectRedis,
   disconnectRedis,
@@ -74,33 +74,36 @@ import { HealthCheckResponse, ReadinessCheckResponse } from "./types/api";
 import { privacyRoutes } from "./routes/privacy";
 import { developerDashboardRoutes } from "./routes/developerDashboard";
 import { travelRuleRoutes } from "./routes/travelRule";
+import subscriptionsRoutes from "./routes/subscriptions";
 import mtnCallbacksRouter from "./routes/mtnCallbacks";
 import sep31Router from "./stellar/sep31";
 import sep24Router from "./stellar/sep24";
 import sep38Router from "./stellar/sep38";
 import { createSep12Router } from "./stellar/sep12";
 import { createSep10Router } from "./stellar/sep10";
+import { sep30Routes } from "./routes/sep30";
 import { createAdminSep10Router } from "./stellar/adminSep10";
 import tomlRouter from "./routes/toml";
 import feesRouter from "./routes/fees";
 import feeStrategiesRouter from "./routes/feeStrategies";
 import crossChainRouter from "./routes/crossChain";
 import reconciliationRoutes from "./routes/reconciliation";
+import accountingReconciliationRoutes from "./routes/accountingReconciliation";
 import exchangeRateBufferRoutes from "./routes/exchangeRateBuffers";
 import adminAssetRoutes from "./routes/admin/assets";
 import settingsRoutes from "./routes/settings";
-
-
 
 // 1. Import Sentry Middleware
 import { initSentry, sentryBreadcrumbMiddleware } from "./middleware/sentry";
 import { WebSocketManager } from "./websocket";
 import { layeredCache } from "./services/layeredCache";
+import { ERROR_CODES } from "./constants/errorCodes";
+import { startApolloServer } from "./graphql/server";
 
 dotenv.config();
 
 if (process.env.SENTRY_DSN) {
-  initSentry(process.env.SENTRY_DSN);
+  initSentry(process.env.SENTRY_DSN, process.env.SENTRY_RELEASE);
 }
 
 validateStellarNetwork();
@@ -126,8 +129,9 @@ if (process.env.SENTRY_DSN) {
 app.use(sentryBreadcrumbMiddleware);
 
 app.use(metricsMiddleware);
-applySecurityMiddleware(app);
+app.use(helmet());
 
+// Compression middleware
 if (process.env.COMPRESSION_ENABLED !== "false") {
   app.use(
     compression({
@@ -137,6 +141,7 @@ if (process.env.COMPRESSION_ENABLED !== "false") {
         if (req.headers["x-no-compression"]) {
           return false;
         }
+        // Don't compress already compressed content types
         const contentType = res.getHeader("content-type") as string;
         if (
           contentType &&
@@ -176,7 +181,7 @@ app.use(i18nMiddleware);
 app.use((req: Request, res: Response, next: NextFunction) => {
   if (isShuttingDown) {
     res.setHeader("Connection", "close");
-    return res.status(503).json({
+    throw createError(ERROR_CODES.SERVICE_UNAVAILABLE, "Service Unavailable", {
       error: "Service Unavailable",
       message: "Server is shutting down. Please retry shortly.",
     });
@@ -204,7 +209,7 @@ const sessionSecret =
 const redisStore = createRedisStore();
 
 app.use(
-  session({
+  session(<SessionOptions>{
     store: redisStore,
     secret: sessionSecret,
     resave: false,
@@ -344,23 +349,24 @@ app.use("/api/v1/stats", statsRoutesV1);
 app.use("/api/v1/vaults", vaultRoutesV1);
 app.use("/api/v1/compliance/travel-rule", travelRuleRoutes);
 
-const deprecatedApiV1Handler: express.RequestHandler = (req, res, next) => {
-  const versionedReq = req as VersionedRequest;
-  versionedReq.apiVersion = "v1";
-  res.setHeader("API-Version", "v1");
-  res.setHeader("Deprecation", "true");
-  res.setHeader(
-    "Sunset",
-    new Date(Date.now() + 180 * 24 * 60 * 60 * 1000).toUTCString(),
-  );
-  res.setHeader(
-    "Url",
-    `https://example.com${req.originalUrl.replace("/api/", "/api/v1/")}`,
-  );
-  next();
-};
-
-app.use("/api/transactions", deprecatedApiV1Handler, transactionRoutes);
+app.use(
+  "/api/transactions",
+  (req: VersionedRequest, res, next) => {
+    req.apiVersion = "v1";
+    res.setHeader("API-Version", "v1");
+    res.setHeader("Deprecation", "true");
+    res.setHeader(
+      "Sunset",
+      new Date(Date.now() + 180 * 24 * 60 * 60 * 1000).toUTCString(),
+    );
+    res.setHeader(
+      "Url",
+      `https://example.com${req.originalUrl.replace("/api/", "/api/v1/")}`,
+    );
+    next();
+  },
+  transactionRoutes,
+);
 app.use("/api/transactions", transactionDisputeRoutes);
 app.use("/api/transactions/bulk", bulkRoutes);
 app.use("/api/disputes", disputeRoutes);
@@ -378,8 +384,6 @@ app.use("/api/reconciliation", reconciliationRoutes);
 app.use("/api/exchange-rate-buffers", exchangeRateBufferRoutes);
 app.use("/api/admin/assets", adminAssetRoutes);
 app.use("/api/settings", settingsRoutes);
-
-
 
 // GDPR
 app.use("/api/gdpr", privacyRoutes);
@@ -413,7 +417,7 @@ app.use(
     next: NextFunction,
   ) => {
     if (err.type === "entity.too.large") {
-      return res.status(413).json({
+      throw createError(ERROR_CODES.LIMIT_EXCEEDED, "Payload Too Large", {
         error: "Payload Too Large",
         message: `Request exceeds the maximum size of ${process.env.REQUEST_SIZE_LIMIT || "10mb"}`,
       });
@@ -495,6 +499,10 @@ async function gracefulShutdown(signal: NodeJS.Signals): Promise<void> {
     await shutdownQueue();
     console.log("[Shutdown] Queue resources closed");
 
+    console.log("[Shutdown] Stopping heartbeat service");
+    stopHeartbeatService();
+    console.log("[Shutdown] Heartbeat service stopped");
+
     console.log("[Shutdown] Closing PostgreSQL pool");
     await pool.end();
     console.log("[Shutdown] PostgreSQL pool closed");
@@ -533,6 +541,9 @@ async function initializeRuntime(): Promise<void> {
   // Initialize Prometheus Horizon Scraper
   startStellarExporter();
 
+  // Initialize System Heartbeat Metric
+  startHeartbeatService();
+
   const { getQueueHealth, pauseQueueEndpoint, resumeQueueEndpoint } =
     await import("./queue/health");
   const { queueDepthHandler, queueDepthPrometheusHandler } =
@@ -551,9 +562,13 @@ async function initializeRuntime(): Promise<void> {
     await layeredCache.init();
     console.log("Layered cache (L1/L2) initialized");
 
-    const { startProviderBalanceAlertWorker, scheduleProviderBalanceAlertJob } =
-      await import("./queue");
+    const {
+      startProviderBalanceAlertWorker,
+      scheduleProviderBalanceAlertJob,
+      startAccountingTokenRefreshWorker,
+    } = await import("./queue");
     startProviderBalanceAlertWorker();
+    startAccountingTokenRefreshWorker();
     await scheduleProviderBalanceAlertJob();
     console.log("Provider balance alert queue initialized");
   } catch (err) {
@@ -583,6 +598,8 @@ async function initializeRuntime(): Promise<void> {
     server = http2Server as unknown as Server;
   } else {
     server = app.listen(PORT, () =>
+    // Start system heartbeat for Prometheus monitoring
+    startHeartbeat();
       console.log(`HTTP/1.1 server running on http://localhost:${PORT}`),
     );
 

@@ -4,6 +4,8 @@ import { accountMergeQueue } from "./accountMergeQueue";
 import { getQueueStats } from "./transactionQueue";
 import { redisClient } from "../config/redis";
 import { Queue } from "bullmq";
+import { ERROR_CODES } from "../constants/errorCodes";
+import { createError } from "../middleware/errorHandler";
 
 export interface QueueDepthMetrics {
   queues: {
@@ -103,7 +105,13 @@ export async function queueDepthHandler(req: Request, res: Response) {
     res.json(metrics);
   } catch (err) {
     console.error("Failed to fetch queue depth:", err);
-    res.status(500).json({ error: "Failed to fetch queue depth" });
+    throw createError(
+      ERROR_CODES.INTERNAL_ERROR,
+      "Failed to fetch queue depth",
+      {
+        error: "Failed to fetch queue depth",
+      },
+    );
   }
 }
 
