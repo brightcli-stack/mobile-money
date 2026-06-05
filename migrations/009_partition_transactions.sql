@@ -104,7 +104,7 @@ CREATE TABLE transactions (
   converted_amount         DECIMAL(20, 7),
   idempotency_key          VARCHAR(255),
   idempotency_expires_at   TIMESTAMP,
-  vault_id                 UUID           REFERENCES vaults(id),
+  vault_id                 UUID,
   fee_category             VARCHAR(100)   DEFAULT 'General Fees',
   location_metadata        JSONB          DEFAULT NULL
 ) PARTITION BY RANGE (created_at);
