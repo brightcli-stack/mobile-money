@@ -6,7 +6,7 @@ import { v4 as uuid } from "uuid";
 import { Transaction, TransactionModel } from "../models/transaction";
 import { logAuditEvent } from "../utils/log-audit-event";
 import { AuditLog, auditService } from "./auditlogService";
-import { TransactionService } from "./transanctionService";
+import { TransactionService } from "./transactionService";
 import {
   deactivateUserAccount,
   getUserById,

@@ -7,7 +7,7 @@ import {
 import logger from "../utils/logger";
 import { MTNProvider } from "./mobilemoney/providers/mtn";
 import { AirtelService } from "./mobilemoney/providers/airtel";
-import { OrangeService } from "./mobilemoney/providers/orange";
+import { OrangeProvider } from "./mobilemoney/providers/orange";
 
 export interface ChainAssetSnapshot {
   chain: "stellar" | "mtn" | "airtel" | "orange";

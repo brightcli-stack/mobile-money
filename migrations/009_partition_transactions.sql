@@ -73,6 +73,11 @@ ALTER TABLE transactions DROP CONSTRAINT IF EXISTS transactions_reference_number
 -- Drop UNIQUE index on idempotency_key
 DROP INDEX IF EXISTS idx_transactions_idempotency_key;
 
+-- Drop CHECK constraints (will be recreated on parent table)
+ALTER TABLE transactions DROP CONSTRAINT IF EXISTS transactions_type_check;
+ALTER TABLE transactions DROP CONSTRAINT IF EXISTS transactions_status_check;
+ALTER TABLE transactions DROP CONSTRAINT IF EXISTS transactions_status_check1;
+
 -- ─────────────────────────────────────────────────────────────────────────────
 -- Step 2: Rename the existing (now constraint-free) table.
 -- ─────────────────────────────────────────────────────────────────────────────

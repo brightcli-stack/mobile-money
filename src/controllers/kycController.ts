@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { UserModel } from '../models/users';
 import { createError } from "../middleware/errorHandler";
 import { ERROR_CODES } from "../constants/errorCodes";
+import logger from "../utils/logger";
 
 // Validation schemas
 const CreateApplicantSchema = z.object({
