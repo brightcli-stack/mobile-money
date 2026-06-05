@@ -105,8 +105,3 @@ jobs:
 
       - name: Check for known vulnerabilities
         run: pnpm audit --prod || true
-
-permissions:
-  contents: read
-  pull-requests: write
-  security-events: write
