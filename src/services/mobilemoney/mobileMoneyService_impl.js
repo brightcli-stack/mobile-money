@@ -54,6 +54,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.MobileMoneyService = void 0;
 var metrics_1 = require("../../utils/metrics");
 var circuitBreaker_1 = require("../../utils/circuitBreaker");
+var providerLatencyWatchdog_1 = require("../providerLatencyWatchdog");
 var MobileMoneyError = /** @class */ (function (_super) {
     __extends(MobileMoneyError, _super);
     function MobileMoneyError(code, message, originalError) {
@@ -231,16 +232,19 @@ var MobileMoneyService = /** @class */ (function () {
                                             case 0: return [4 /*yield*/, this.callProvider(provider, op, phoneNumber, amount)];
                                             case 1:
                                                 result = _a.sent();
+                                                var providerResponseTimeMs = result.providerResponseTimeMs;
                                                 return [2 /*return*/, result.success
                                                         ? {
                                                             success: true,
                                                             provider: providerKey,
                                                             data: result.data,
+                                                            providerResponseTimeMs: providerResponseTimeMs,
                                                         }
                                                         : {
                                                             success: false,
                                                             provider: providerKey,
                                                             error: result.error,
+                                                            providerResponseTimeMs: providerResponseTimeMs,
                                                         }];
                                         }
                                     });
@@ -271,7 +275,12 @@ var MobileMoneyService = /** @class */ (function () {
                                     }); }
                                     : undefined,
                             })];
-                    case 3: return [2 /*return*/, _a.sent()];
+                    case 3:
+                        result = _a.sent();
+                        if (result.providerResponseTimeMs) {
+                            providerLatencyWatchdog_1.recordProviderLatency(providerKey, result.providerResponseTimeMs).catch(function () { });
+                        }
+                        return [2 /*return*/, result];
                     case 4:
                         error_1 = _a.sent();
                         metrics_1.transactionTotal.inc({
