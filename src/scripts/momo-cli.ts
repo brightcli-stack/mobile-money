@@ -26,6 +26,16 @@ const colors = {
   gray: isTest ? "" : "\x1b[90m",
 };
 
+export function printError(message: string, error?: any, code?: string): void {
+  const label = code ? `[${code}] ` : "";
+  console.error(
+    `\n${colors.red}✗ Error: ${colors.bold}${label}${colors.reset}${colors.red}${message}${colors.reset}\n`,
+  );
+  if (error && error.message) {
+    console.error(`  ${colors.gray}Details: ${error.message}${colors.reset}\n`);
+  }
+}
+
 export function showHelp() {
   console.log(`
 ${colors.cyan}${colors.bold}Mobile Money Admin CLI${colors.reset}
@@ -53,9 +63,7 @@ export async function runCli(args: string[]): Promise<void> {
 
   if (command === "retry-batch") {
     if (!batchId) {
-      console.error(
-        `${colors.red}Error: Missing batch ID argument.${colors.reset}`,
-      );
+      printError("Missing batch ID argument.", undefined, "ERR_MISSING_ARG");
       console.log(`Usage: momo-cli retry-batch <batch_id>`);
       process.exitCode = 1;
       return;
@@ -64,8 +72,10 @@ export async function runCli(args: string[]): Promise<void> {
     const UUID_REGEX =
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     if (!UUID_REGEX.test(batchId)) {
-      console.error(
-        `${colors.red}Error: Invalid batch ID format. Must be a valid UUID.${colors.reset}`,
+      printError(
+        "Invalid batch ID format. Must be a valid UUID.",
+        undefined,
+        "ERR_INVALID_FORMAT",
       );
       process.exitCode = 1;
       return;
@@ -138,8 +148,6 @@ export async function runCli(args: string[]): Promise<void> {
         `\n${colors.cyan}Re-queueing ${colors.bold}${retriable.length}${colors.reset} transaction(s) for retry...`,
       );
 
-
-
       for (const tx of retriable) {
         const prevStatus = tx.status;
 
@@ -168,15 +176,18 @@ export async function runCli(args: string[]): Promise<void> {
         `\n${colors.green}${colors.bold}Successfully re-queued all ${retriable.length} transaction(s) for batch ${batchId}.${colors.reset}`,
       );
     } catch (err) {
-      console.error(
-        `\n${colors.red}Error executing retry-batch command:${colors.reset}`,
+      printError(
+        "Error executing retry-batch command",
         err,
+        "ERR_EXECUTION_FAILED",
       );
       process.exitCode = 1;
     }
   } else {
-    console.error(
-      `${colors.red}Error: Unknown command "${command}".${colors.reset}`,
+    printError(
+      `Unknown command "${command}".`,
+      undefined,
+      "ERR_UNKNOWN_COMMAND",
     );
     showHelp();
     process.exitCode = 1;
