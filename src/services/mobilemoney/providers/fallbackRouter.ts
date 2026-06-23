@@ -18,7 +18,17 @@ const TIMEOUT_ERROR_CODES = new Set([
   "ECONNABORTED",
   "ESOCKETTIMEDOUT",
   "ECONNRESET",
+  "ERR_TIMEOUT",
 ]);
+
+const TIMEOUT_MESSAGE_INDICATORS = [
+  "timeout",
+  "timed out",
+  "timedout",
+  "etimedout",
+  "econnaborted",
+  "esockettimedout",
+];
 
 const TIMEOUT_HTTP_CODES = new Set([408, 429, 502, 503, 504]);
 
@@ -45,9 +55,12 @@ function isTimeoutError(error: unknown): boolean {
   const code = (error as any).code;
 
   if (code && TIMEOUT_ERROR_CODES.has(code)) return true;
-  if (msg.toLowerCase().includes("timeout")) return true;
-  if (msg.toLowerCase().includes("timed out")) return true;
-  if (msg.toLowerCase().includes("abort")) return true;
+
+  const lower = msg.toLowerCase();
+  for (const indicator of TIMEOUT_MESSAGE_INDICATORS) {
+    if (lower.includes(indicator)) return true;
+  }
+  if (lower.includes("abort")) return true;
 
   const status = (error as any).status ?? (error as any).statusCode;
   if (status && TIMEOUT_HTTP_CODES.has(Number(status))) return true;
@@ -95,9 +108,17 @@ export class FallbackRouter implements MobileMoneyProvider {
       );
       return { success: result.success, data: result.data, error: result.error };
     } catch (primaryError: any) {
+      if (!isTimeoutError(primaryError)) {
+        log.warn(
+          { error: primaryError.message },
+          "FallbackRouter: Primary failed with non-timeout error",
+        );
+        return { success: false, error: primaryError };
+      }
+
       log.warn(
         { error: primaryError.message },
-        "FallbackRouter: Primary failed, routing to SMS portal",
+        "FallbackRouter: Primary timed out, routing to SMS portal",
       );
 
       if (this.config.enableMetrics) {
@@ -146,9 +167,17 @@ export class FallbackRouter implements MobileMoneyProvider {
       );
       return { success: result.success, data: result.data, error: result.error };
     } catch (primaryError: any) {
+      if (!isTimeoutError(primaryError)) {
+        log.warn(
+          { error: primaryError.message },
+          "FallbackRouter: Primary failed with non-timeout error",
+        );
+        return { success: false, error: primaryError };
+      }
+
       log.warn(
         { error: primaryError.message },
-        "FallbackRouter: Primary failed, routing to SMS portal",
+        "FallbackRouter: Primary timed out, routing to SMS portal",
       );
 
       if (this.config.enableMetrics) {
