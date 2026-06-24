@@ -1,4 +1,4 @@
-import crypto from "crypto";
+import * as crypto from "crypto";
 import { pool } from "../config/database";
 
 export type AMLTransactionType = "deposit" | "withdraw";
@@ -189,10 +189,10 @@ export class AMLService {
     }
   }
 
-  evaluateTransaction(
+  async evaluateTransaction(
     current: AMLTransactionRecord,
     recentTransactions: AMLTransactionRecord[],
-  ): AMLMonitoringResult {
+  ): Promise<AMLMonitoringResult> {
     const ruleHits: AMLRuleHit[] = [];
     const lookbackStart = this.getLookbackWindowStart(current.createdAt);
     const windowTxs = recentTransactions.filter(
@@ -289,7 +289,7 @@ export class AMLService {
       this.fetchUserName(transaction.userId),
     ]);
 
-    const result = this.evaluateTransaction(transaction, recent);
+    const result = await this.evaluateTransaction(transaction, recent);
 
     if (userName) {
       const sanctionMatches = await sanctionService.searchSanctions(userName);
@@ -399,7 +399,7 @@ export class AMLService {
       dailyMap.set(key, (dailyMap.get(key) ?? 0) + 1);
     }
 
-    const daily = [...dailyMap.entries()]
+    const daily = Array.from(dailyMap.entries())
       .map(([date, count]) => ({ date, alerts: count }))
       .sort((a, b) => a.date.localeCompare(b.date));
 
@@ -418,9 +418,22 @@ export class AMLService {
   private async recordAlert(alert: AMLAlert): Promise<void> {
     // Store in database for persistence
     try {
-      const { AMLAlertModel } = await import("../models/amlAlert");
+      const { AMLAlertModel } = await import("../models/amlAlert.js");
       const model = new AMLAlertModel();
       await model.create(alert);
+
+      // AUTOMATION: If severity is high, automatically prepare SAR draft
+      if (alert.severity === "high") {
+        console.log(`[SAR AUTO-PREPARE] High severity alert ${alert.id} detected. Preparing SAR...`);
+        try {
+          const { generateSAR } = require("../compliance/sar");
+          generateSAR(alert.userId, alert.id).catch((err: any) => {
+            console.error(`[SAR AUTO-PREPARE ERROR] Failed for alert ${alert.id}:`, err);
+          });
+        } catch (err) {
+          console.error(`[SAR AUTO-PREPARE ERROR] Failed to load sar service:`, err);
+        }
+      }
     } catch (error) {
       console.error("Failed to persist AML alert to database:", error);
       // Fallback to in-memory storage
