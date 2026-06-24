@@ -37,6 +37,10 @@ export class StellarService {
   > = new Map();
   private readonly CACHE_TTL_MS = 30_000; // 30 seconds
 
+  // Simple in-memory cache for network fee variables
+  private feeCache: { baseFee: number; expires: number } | null = null;
+  private readonly FEE_CACHE_TTL_MS = 60_000; // 1 minute
+
   constructor() {
     this.server = getStellarServer();
 
@@ -74,6 +78,35 @@ export class StellarService {
   }
 
   /**
+   * Fetches the network base fee from the Horizon client, caching the result
+   * for 1 minute to minimize API calls on startup and dispatches.
+   */
+  private async getNetworkBaseFee(): Promise<number> {
+    if (this.isMockMode) {
+      return StellarSdk.BASE_FEE;
+    }
+
+    if (this.feeCache && this.feeCache.expires > Date.now()) {
+      return this.feeCache.baseFee;
+    }
+
+    try {
+      const baseFee = await this.server.fetchBaseFee();
+      this.feeCache = {
+        baseFee,
+        expires: Date.now() + this.FEE_CACHE_TTL_MS,
+      };
+      return baseFee;
+    } catch (error) {
+      console.warn(
+        "Failed to fetch network base fee from Horizon, using default BASE_FEE:",
+        error instanceof Error ? error.message : error,
+      );
+      return StellarSdk.BASE_FEE;
+    }
+  }
+
+  /**
    * Submits a transaction wrapped in a FeeBumpTransaction.
    * This allows the fee payer account to cover network fees for the transaction.
    *
@@ -94,9 +127,10 @@ export class StellarService {
     }
 
     try {
+      const baseFee = await this.getNetworkBaseFee();
       const feeBumpTx = StellarSdk.TransactionBuilder.buildFeeBumpTransaction(
         this.feePayerKeypair,
-        (parseInt(innerTx.fee) + StellarSdk.BASE_FEE).toString(),
+        (parseInt(innerTx.fee) + baseFee).toString(),
         innerTx,
         getNetworkPassphrase(),
       );
@@ -198,8 +232,9 @@ export class StellarService {
         this.issuerKeypair.publicKey(),
       );
 
+      const baseFee = await this.getNetworkBaseFee();
       const transaction = new StellarSdk.TransactionBuilder(account, {
-        fee: StellarSdk.BASE_FEE,
+        fee: baseFee.toString(),
         networkPassphrase: getNetworkPassphrase(),
       })
         .addOperation(
@@ -389,8 +424,9 @@ export class StellarService {
       const account = await this.server.loadAccount(
         this.issuerKeypair.publicKey(),
       );
+      const baseFee = await this.getNetworkBaseFee();
       const transaction = new StellarSdk.TransactionBuilder(account, {
-        fee: StellarSdk.BASE_FEE,
+        fee: baseFee.toString(),
         networkPassphrase: getNetworkPassphrase(),
       })
         .addOperation(
@@ -442,8 +478,9 @@ export class StellarService {
       const account = await this.server.loadAccount(
         this.issuerKeypair.publicKey(),
       );
+      const baseFee = await this.getNetworkBaseFee();
       const transaction = new StellarSdk.TransactionBuilder(account, {
-        fee: StellarSdk.BASE_FEE,
+        fee: baseFee.toString(),
         networkPassphrase: getNetworkPassphrase(),
       })
         .addOperation(
