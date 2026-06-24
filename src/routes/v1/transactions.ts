@@ -25,6 +25,7 @@ import { geoFencingMiddleware } from "../../middleware/geoFencing";
 import { createExportRoutes } from "../export";
 import { TransactionModel, TransactionStatus } from "../../models/transaction";
 import { generateTransactionPdfBuffer } from "../../services/pdfReceipt";
+import { validate2FAForWithdrawal } from "../../services/twoFactorWithdrawalService";
 
 
 export const transactionRoutesV1 = Router();
@@ -57,6 +58,7 @@ transactionRoutesV1.post(
   haltOnTimedout,
   setApiVersion("v1"),
   geolocateMiddleware,
+  validate2FAForWithdrawal,
   withdrawHandler,
 );
 

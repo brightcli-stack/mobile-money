@@ -6,7 +6,11 @@ import {
   CreateVaultInput,
   VaultTransferInput,
 } from "../models/vault";
-import { lockManager, LockKeys } from "../utils/lock";
+import {
+  isLockAcquisitionError,
+  lockManager,
+  LockKeys,
+} from "../utils/lock";
 import { createError } from "../middleware/errorHandler";
 import { ERROR_CODES } from "../constants/errorCodes";
 
@@ -332,7 +336,7 @@ export const transferFunds = async (req: Request, res: Response) => {
     }
 
     // Use distributed lock to prevent race conditions
-    const lockKey = `vault-transfer:${userId}:${vaultId}`;
+    const lockKey = LockKeys.vaultTransfer(userId, vaultId);
 
     const result = await lockManager.withLock(
       lockKey,
@@ -364,6 +368,26 @@ export const transferFunds = async (req: Request, res: Response) => {
     }
 
     logger.error("Transfer funds error:", error);
+
+    if (isLockAcquisitionError(error)) {
+      if (error.isContention) {
+        throw createError(
+          ERROR_CODES.CONFLICT,
+          "Vault transfer already in progress",
+          {
+            error: "Vault transfer already in progress",
+          },
+        );
+      }
+
+      throw createError(
+        ERROR_CODES.SERVICE_UNAVAILABLE,
+        "Vault transfer lock service unavailable",
+        {
+          error: "Vault transfer lock service unavailable",
+        },
+      );
+    }
 
     if (error.message.includes("Insufficient")) {
       throw createError(ERROR_CODES.INSUFFICIENT_FUNDS, error.message, {
