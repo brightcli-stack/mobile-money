@@ -227,7 +227,7 @@ export async function checkAndResetCircuitBreaker(provider: string, operation: s
   }
 
   // Only attempt to reset if the circuit is open or half-open
-  const state = breaker.toJSON().state as { open: boolean; halfOpen: boolean };
+  const state = (breaker as any).toJSON().state as { open: boolean; halfOpen: boolean };
   if (!state?.open && !state?.halfOpen) {
     return false;
   }
