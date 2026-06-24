@@ -39,6 +39,10 @@ export class StellarService {
   > = new Map();
   private readonly CACHE_TTL_MS = 30_000; // 30 seconds
 
+  // Simple in-memory cache for network fee variables
+  private feeCache: { baseFee: number; expires: number } | null = null;
+  private readonly FEE_CACHE_TTL_MS = 60_000; // 1 minute
+
   constructor() {
     this.server = getStellarServer();
 
@@ -119,9 +123,10 @@ export class StellarService {
     }
 
     try {
+      const baseFee = await this.getNetworkBaseFee();
       const feeBumpTx = StellarSdk.TransactionBuilder.buildFeeBumpTransaction(
         this.feePayerKeypair,
-        (parseInt(innerTx.fee) + StellarSdk.BASE_FEE).toString(),
+        (parseInt(innerTx.fee) + baseFee).toString(),
         innerTx,
         getNetworkPassphrase(),
       );
@@ -223,8 +228,9 @@ export class StellarService {
         this.issuerKeypair.publicKey(),
       );
 
+      const baseFee = await this.getNetworkBaseFee();
       const transaction = new StellarSdk.TransactionBuilder(account, {
-        fee: StellarSdk.BASE_FEE,
+        fee: baseFee.toString(),
         networkPassphrase: getNetworkPassphrase(),
       })
         .addOperation(
@@ -416,8 +422,9 @@ export class StellarService {
       const account = await this.server.loadAccount(
         this.issuerKeypair.publicKey(),
       );
+      const baseFee = await this.getNetworkBaseFee();
       const transaction = new StellarSdk.TransactionBuilder(account, {
-        fee: StellarSdk.BASE_FEE,
+        fee: baseFee.toString(),
         networkPassphrase: getNetworkPassphrase(),
       })
         .addOperation(
@@ -467,8 +474,9 @@ export class StellarService {
       const account = await this.server.loadAccount(
         this.issuerKeypair.publicKey(),
       );
+      const baseFee = await this.getNetworkBaseFee();
       const transaction = new StellarSdk.TransactionBuilder(account, {
-        fee: StellarSdk.BASE_FEE,
+        fee: baseFee.toString(),
         networkPassphrase: getNetworkPassphrase(),
       })
         .addOperation(
