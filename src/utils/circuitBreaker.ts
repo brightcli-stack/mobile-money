@@ -249,3 +249,22 @@ export async function checkAndResetCircuitBreaker(provider: string, operation: s
 export function getCircuitBreakerCount(): number {
   return circuitBreakers.size;
 }
+
+/**
+ * Programmatically open (trip) the circuit breaker for a provider+operation.
+ * Creates the breaker if it doesn't exist yet.
+ */
+export async function tripCircuitBreaker(
+  provider: string,
+  operation: string,
+): Promise<void> {
+  const breaker = await getOrCreateCircuitBreaker(provider, operation);
+  // opossum exposes open() on its prototype; use the internal flag as fallback
+  if (typeof (breaker as any).open === "function") {
+    (breaker as any).open();
+  } else {
+    // Force-open by marking the breaker via its internal state setter
+    (breaker as any).forcedOpen = true;
+  }
+  emitStateTransitionMetric(provider, operation, "open");
+}
