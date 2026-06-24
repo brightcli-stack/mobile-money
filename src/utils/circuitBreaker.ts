@@ -26,30 +26,25 @@ type BreakerFallback<T> = (
   error: unknown,
 ) => Promise<CircuitBreakerActionResult<T>> | CircuitBreakerActionResult<T>;
 
+/**
+ * The runtime `opossum.CircuitBreaker` (pinned to `9.0.0` in
+ * `package.json`) exposes a `.toJSON()` method that is not declared
+ * in opossum's shipped type definitions (opossum ships only `*.js`
+ * with no `.d.ts`, so TypeScript infers the class shape from the
+ * JS sources and loses the method). Intersection-injecting the
+ * method on our local `ProviderCircuitBreaker<T>` alias makes
+ * downstream consumers that serialise a breaker (e.g.
+ * `JSON.stringify(breaker)` in structured logging) type-safe
+ * without relying on `declare module "opossum"` augmentation,
+ * which TypeScript cannot reliably merge into inferred JS
+ * class shapes.
+ */
 type ProviderCircuitBreaker<T> = CircuitBreaker<
   [BreakerInvocation<T>, BreakerFallback<T> | undefined],
   CircuitBreakerActionResult<T>
->;
-
-/**
- * Declare a `.toJSON()` method on the generic `CircuitBreaker` interface.
- *
- * opossum (pinned to `9.0.0` in `package.json`) ships only `*.js` source
- * with no `.d.ts`. When TypeScript infers the class' shape from those JS
- * sources it does not include the runtime `CircuitBreaker#toJSON`
- * method that opossum adds for `JSON.stringify(breaker)` support. Any
- * downstream consumer that serialises a `ProviderCircuitBreaker` would
- * trip a `TS2339: Property 'toJSON' does not exist on type
- * 'ProviderCircuitBreaker<unknown>'` error. This module
- * augmentation makes the method visible to the type checker without
- * touching opossum's runtime behaviour.
- */
-declare module "opossum" {
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  interface CircuitBreaker<_Args, _R> {
-    toJSON?: () => unknown;
-  }
-}
+> & {
+  toJSON?: () => unknown;
+};
 
 const circuitBreakers = new Map<string, ProviderCircuitBreaker<unknown>>();
 
