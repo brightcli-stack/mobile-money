@@ -14,3 +14,12 @@ STELLAR_TOML_STALE_WHILE_REVALIDATE = "86400"
 # Cache TTL for other .well-known paths (seconds)
 DEFAULT_MAX_AGE = "300"
 DEFAULT_STALE_WHILE_REVALIDATE = "3600"
+
+[env.development]
+name = "well-known-cache-dev"
+routes = [
+  { pattern = "*localhost:.well-known/*" }
+]
+# Disaster Recovery (DR) Failover Configuration
+DR_FAILOVER_URL = ""
+DR_FAILOVER_MODE = "PROXY"
