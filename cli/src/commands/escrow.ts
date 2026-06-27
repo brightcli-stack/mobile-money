@@ -3,6 +3,7 @@ import chalk from "chalk";
 import inquirer from "inquirer";
 import { releaseEscrow } from "../api";
 import { printError } from "../dashboard";
+import { formatSuccess } from "../utils/cliFormatting";
 
 export function registerEscrowCommand(program: Command): void {
   const escrow = program.command("escrow").description("Escrow management");
@@ -18,13 +19,15 @@ export function registerEscrowCommand(program: Command): void {
     .action(async (escrowId: string, opts: { threshold: string }) => {
       const threshold = parseInt(opts.threshold, 10);
       if (isNaN(threshold) || threshold < 1) {
-        printError("--threshold must be a positive integer", undefined, "ERR_ESCROW");
+        printError(
+          "--threshold must be a positive integer",
+          undefined,
+          "ERR_ESCROW",
+        );
         process.exit(1);
       }
 
-      console.log(
-        chalk.cyan(`\nEscrow release: ${chalk.bold(escrowId)}`),
-      );
+      console.log(chalk.cyan(`\nEscrow release: ${chalk.bold(escrowId)}`));
       console.log(
         chalk.yellow(`Requires ${threshold} approval signature(s).\n`),
       );
@@ -66,7 +69,7 @@ export function registerEscrowCommand(program: Command): void {
 
       try {
         const result = await releaseEscrow(escrowId, signatures);
-        console.log(`\n${chalk.green("✓")} ${result.message}`);
+        console.log(`\n${formatSuccess(result.message)}`);
         if (result.txHash) {
           console.log(`  Tx hash: ${chalk.cyan(result.txHash)}`);
         }
